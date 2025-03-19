@@ -85,34 +85,38 @@ python -m build
 # 6. Upload to PyPI
 echo -e "\n${YELLOW}Uploading to PyPI...${NC}"
 
-# Check for .env file with PyPI credentials
-if [[ -f ".env" ]]; then
-    echo -e "${YELLOW}Found .env file. Will attempt to use PyPI credentials from there.${NC}"
-    # Source the .env file to get TWINE_USERNAME and TWINE_PASSWORD
-    source .env
-fi
-
-# Always provide an option to enter credentials manually
-echo -e "${YELLOW}Choose how to authenticate with PyPI:${NC}"
-echo "1. Use environment variables/credentials from .env (if available)"
-echo "2. Enter credentials manually"
-read -p "Enter your choice (1/2): " auth_choice
-
-if [[ $auth_choice == "2" ]]; then
-    read -p "Enter PyPI username (use __token__ for token auth): " twine_user
-    read -sp "Enter PyPI password or token: " twine_pass
-    echo ""  # Add a newline after password input
-    
-    # Use entered credentials for this upload only
-    export TWINE_USERNAME="$twine_user"
-    export TWINE_PASSWORD="$twine_pass"
-fi
-
+# Get credentials - simplest approach
 read -p "Continue with upload? (y/n): " do_upload
 
 if [[ $do_upload == "y" ]]; then
-    echo -e "${YELLOW}Running: python -m twine upload dist/*${NC}"
-    python -m twine upload dist/*
+    # Check if .env file exists
+    if [[ -f ".env" ]]; then
+        echo -e "${YELLOW}Found .env file. Reading credentials...${NC}"
+        # Extract username and password directly
+        username=$(grep -m 1 "TWINE_USERNAME" .env | cut -d '=' -f 2)
+        password=$(grep -m 1 "TWINE_PASSWORD" .env | cut -d '=' -f 2)
+        
+        # Check if credentials were found
+        if [[ -n "$username" && -n "$password" ]]; then
+            echo -e "${GREEN}Using credentials from .env file${NC}"
+            echo -e "${YELLOW}Running direct upload command with .env credentials${NC}"
+            # Execute explicit command with credentials
+            python -m twine upload --username "$username" --password "$password" dist/*
+        else
+            echo -e "${RED}Could not read credentials from .env file${NC}"
+            # Fall back to manual entry
+            read -p "Enter PyPI username: " username
+            read -sp "Enter PyPI password/token: " password
+            echo ""
+            python -m twine upload --username "$username" --password "$password" dist/*
+        fi
+    else
+        echo -e "${YELLOW}No .env file found. Please enter credentials manually:${NC}"
+        read -p "Enter PyPI username: " username
+        read -sp "Enter PyPI password/token: " password
+        echo ""
+        python -m twine upload --username "$username" --password "$password" dist/*
+    fi
     
     # Check if upload was successful
     if [ $? -eq 0 ]; then
