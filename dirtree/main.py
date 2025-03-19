@@ -481,7 +481,7 @@ def ask_for_model_preference(default_model: str) -> str:
 
 def call_openai_api(
     prompt: str, api_key: str, model: str = "gpt-3.5-turbo", max_tokens: int = 1000, 
-    max_retries: int = 5, base_delay: float = 1.0
+    max_retries: int = 5, base_delay: float = 3.0
 ) -> str:
     """
     Call OpenAI API using curl command.
@@ -678,7 +678,7 @@ def generate_file_summaries(
     max_tokens_per_file = 8000 * 2  # Threshold for considering a file "large" - increase this value to handle larger files without splitting
     
     # Add a delay between batches to avoid hitting rate limits
-    batch_delay = 2.0  # seconds
+    batch_delay = 5.0  # seconds
 
     # Setup progress bar
     try:
@@ -811,7 +811,7 @@ def generate_project_context(
     max_files: int = 100,
     respect_gitignore: bool = True,
     model: str = None,
-    batch_delay: float = 2.0,
+    batch_delay: float = 5.0,
 ) -> None:
     """
     Generate a comprehensive context file about the project for LLMs.
@@ -998,7 +998,7 @@ def main():
     parser.add_argument(
         "--batch-delay",
         type=float,
-        default=2.0,
+        default=5.0,
         help="Delay in seconds between API call batches to avoid rate limits (default: 2.0)",
     )
     args = parser.parse_args()
