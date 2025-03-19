@@ -1,0 +1,18 @@
+# dirtree
+
+> The 'llmdirtree' project is a Python-based tool designed to enhance interactions with language models (LLMs) by visualizing directory structures and generating contextual information. It utilizes Python, with dependencies managed through setuptools, and includes a deployment script for automating releases. The core functionality is encapsulated in the 'dirtree' module, which processes directory trees, respects .gitignore patterns, and interfaces with OpenAI's API for summarizing large files. The project architecture includes a main script for generating directory trees and context files, supported by configuration and deployment scripts.
+
+## Root Directory
+
+- **.gitignore**: Defines patterns for files and directories to be ignored by Git, focusing on Python build artifacts, environment files, IDE configurations, and OS-specific files.
+- **README.md**: Provides an overview of the 'llmdirtree' tool, detailing its purpose to enhance LLM interactions through directory tree visualization and context generation, with installation instructions, key features, usage examples, and security considerations.
+- **deploy.sh**: A Bash script for automating the deployment process of the 'llmdirtree' project, including checking for uncommitted changes, pushing to GitHub, version management, building the package, and uploading to PyPI with optional credential handling from a .env file.
+- **directory_tree.txt**: Contains a visual representation of the project's directory structure, excluding specified directories and files, to aid in understanding the layout of the 'llmdirtree' codebase.
+- **pyproject.toml**: Specifies the build system requirements for the project, using setuptools and wheel, with 'setuptools.build_meta' as the build backend.
+- **setup.py**: This file configures the Python package 'llmdirtree', specifying its metadata, dependencies, and entry points for installation using setuptools.
+
+## dirtree/
+
+- **__init__.py**: Initializes the 'dirtree' module by importing key functions and setting the package version.
+- **main.py**: This script generates a directory tree and optionally creates a context file for LLM interactions, handling .gitignore patterns, file collection, and API calls to OpenAI for summarizing large files.
+

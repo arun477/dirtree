@@ -21,12 +21,15 @@ pip install llmdirtree
 - Clean, standardized visualization of project structure
 - Unicode box-drawing characters for optimal parsing
 - Intelligent filtering of non-essential directories
+- Full `.gitignore` pattern support for accurate representation of your project
 
 ### LLM Context Generation
 - AI-powered analysis of your codebase using OpenAI API
 - Security-focused with automatic `.gitignore` pattern recognition
 - File-by-file summaries optimized for follow-up questions
+- Intelligent handling of large files with automatic chunking and summarization
 - Project overview that captures your codebase's essence
+- Customizable OpenAI model selection
 
 ### Security and Privacy
 - Respects `.gitignore` patterns to avoid exposing sensitive information
@@ -67,6 +70,9 @@ llmdirtree --max-files 150 --llm-context
 
 # Override gitignore protection (not recommended)
 llmdirtree --ignore-gitignore --llm-context
+
+# Specify OpenAI model to use (avoids prompting)
+llmdirtree --llm-context --model gpt-4
 ```
 
 ## Example Output
@@ -111,6 +117,28 @@ project/
 - **More accurate responses** with both structural and semantic understanding
 - **Security first** approach that protects sensitive information
 - **Time savings** from clearer communication with AI assistants
+- **Handles large codebases** by intelligently processing and summarizing large files
+
+## Configuration
+
+### OpenAI Model Selection
+By default, llmdirtree will ask which OpenAI model you want to use once per run:
+- Default for batch processing: `gpt-3.5-turbo-16k`
+- Default for project overview: `gpt-3.5-turbo`
+
+You can skip this prompt by specifying a model directly:
+```bash
+llmdirtree --llm-context --model gpt-4
+```
+
+### Large File Handling
+llmdirtree automatically handles large files by:
+1. Identifying files exceeding the token threshold (default: 8000 tokens)
+2. Splitting them into meaningful chunks
+3. Summarizing each chunk independently
+4. Creating a cohesive final summary
+
+You can adjust this threshold by modifying the `max_tokens_per_file` variable in the source code.
 
 ## Technical Details
 

@@ -15,16 +15,26 @@ import tempfile
 import shutil
 import fnmatch
 import re
-from typing import Set, TextIO, List, Dict, Tuple, Pattern
+from typing import Set, TextIO, List, Dict, Tuple, Pattern, Optional
 from pathlib import Path
 
 
 def write_directory_tree(
-    file: TextIO, root_dir: str, exclude_dirs: Set[str], prefix: str = ""
+    file: TextIO, 
+    root_dir: str, 
+    exclude_dirs: Set[str], 
+    prefix: str = "", 
+    gitignore_patterns: Optional[List[str]] = None,
+    project_root: Optional[str] = None
 ):
     """
-    Write a directory tree structure to a file, excluding specified directories.
+    Write a directory tree structure to a file, excluding specified directories
+    and respecting gitignore patterns.
     """
+    # Use the root_dir as project_root if not provided
+    if project_root is None:
+        project_root = root_dir
+        
     try:
         # Get items in the directory, excluding those in exclude_dirs
         items = []
@@ -33,6 +43,11 @@ def write_directory_tree(
                 continue
 
             path = os.path.join(root_dir, item)
+            
+            # Skip items ignored by gitignore
+            if gitignore_patterns and is_ignored_by_gitignore(path, project_root, gitignore_patterns):
+                continue
+                
             is_dir = os.path.isdir(path)
             items.append((item, path, is_dir))
     except PermissionError:
@@ -54,7 +69,7 @@ def write_directory_tree(
         if is_dir:
             # Set the prefix for the next level
             next_prefix = prefix + ("    " if is_last else "│   ")
-            write_directory_tree(file, path, exclude_dirs, next_prefix)
+            write_directory_tree(file, path, exclude_dirs, next_prefix, gitignore_patterns, project_root)
 
 
 def is_text_file(file_path: str) -> bool:
@@ -287,15 +302,19 @@ def collect_files_for_context(
     for root, dirs, files in os.walk(root_dir):
         # Skip excluded directories
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        
+        # Skip directories ignored by gitignore
+        if respect_gitignore and gitignore_patterns:
+            dirs[:] = [d for d in dirs if not is_ignored_by_gitignore(
+                os.path.join(root, d), root_dir, gitignore_patterns)]
 
         for file in sorted(files):
             file_path = os.path.join(root, file)
             relative_path = os.path.relpath(file_path, root_dir)
 
             # Skip files larger than max_size_kb
-            if os.path.getsize(file_path) > max_size_kb * 1024:
-                continue
-
+            file_size_kb = os.path.getsize(file_path) / 1024
+            
             # Only process text files
             if not is_text_file(file_path):
                 continue
@@ -330,6 +349,88 @@ def collect_files_for_context(
             break
 
     return collected_files
+
+
+def split_file_into_chunks(content: str, max_tokens_per_chunk: int = 4000) -> List[str]:
+    """
+    Split file content into chunks that don't exceed the token limit.
+    Tries to split at natural boundaries like newlines.
+    """
+    # If content is small enough, return it as is
+    if estimate_tokens(content) <= max_tokens_per_chunk:
+        return [content]
+    
+    chunks = []
+    lines = content.split('\n')
+    current_chunk = []
+    current_tokens = 0
+    
+    for line in lines:
+        line_tokens = estimate_tokens(line + '\n')
+        
+        # If a single line exceeds the token limit, split it further
+        if line_tokens > max_tokens_per_chunk:
+            # If we have content in the current chunk, add it first
+            if current_chunk:
+                chunks.append('\n'.join(current_chunk))
+                current_chunk = []
+                current_tokens = 0
+            
+            # Split long line into smaller pieces
+            words = line.split(' ')
+            sub_line = []
+            sub_tokens = 0
+            
+            for word in words:
+                word_tokens = estimate_tokens(word + ' ')
+                if sub_tokens + word_tokens > max_tokens_per_chunk:
+                    if sub_line:  # Add accumulated sub_line to chunks
+                        chunks.append(' '.join(sub_line))
+                    sub_line = [word]
+                    sub_tokens = word_tokens
+                else:
+                    sub_line.append(word)
+                    sub_tokens += word_tokens
+            
+            # Add any remaining part of the line
+            if sub_line:
+                current_chunk.append(' '.join(sub_line))
+                current_tokens = estimate_tokens(' '.join(sub_line) + '\n')
+                
+        # If adding this line would exceed the limit, start a new chunk
+        elif current_tokens + line_tokens > max_tokens_per_chunk:
+            chunks.append('\n'.join(current_chunk))
+            current_chunk = [line]
+            current_tokens = line_tokens
+        else:
+            current_chunk.append(line)
+            current_tokens += line_tokens
+    
+    # Add the last chunk if it has content
+    if current_chunk:
+        chunks.append('\n'.join(current_chunk))
+    
+    return chunks
+
+
+def ask_for_model_preference(default_model: str) -> str:
+    """
+    Ask the user if they want to use the default model or specify a different one.
+    Returns the model name to use.
+    """
+    response = input(f"Would you like to use the default model ({default_model}) for all API calls? [Y/n]: ").strip().lower()
+    if response == "" or response.startswith("y"):
+        print(f"Using default model: {default_model}")
+        return default_model
+    
+    # User wants to specify a different model
+    custom_model = input("Please enter the OpenAI model you would like to use: ").strip()
+    if custom_model:
+        print(f"Using model: {custom_model} for all API calls")
+        return custom_model
+    else:
+        print(f"No model specified, using default: {default_model}")
+        return default_model
 
 
 def call_openai_api(
@@ -392,91 +493,177 @@ def call_openai_api(
         os.unlink(temp_path)
 
 
+def generate_summary_for_large_file(
+    file_path: str, relative_path: str, content: str, api_key: str, 
+    max_tokens_per_chunk: int = 4000, model: str = "gpt-3.5-turbo"
+) -> str:
+    """
+    Generate a summary for a large file by splitting it into chunks,
+    summarizing each chunk, and then summarizing the combined summaries.
+    """
+    print(f"Handling large file: {relative_path}")
+    
+    # Split the file into chunks
+    chunks = split_file_into_chunks(content, max_tokens_per_chunk)
+    chunk_summaries = []
+    
+    print(f"  - Split into {len(chunks)} chunks")
+    
+    # Summarize each chunk
+    for i, chunk in enumerate(chunks):
+        chunk_prompt = f"Summarize this code chunk ({i+1}/{len(chunks)}) from file '{relative_path}'. Focus on:\n"
+        chunk_prompt += "1. What functionality this particular chunk implements\n"
+        chunk_prompt += "2. How it fits into the larger file (if apparent)\n"
+        chunk_prompt += "3. Key data structures or algorithms used\n\n"
+        chunk_prompt += "Be concise (2-3 sentences max).\n\n"
+        chunk_prompt += f"CODE CHUNK:\n{chunk}"
+        
+        chunk_summary = call_openai_api(
+            chunk_prompt, api_key, model=model, max_tokens=200
+        )
+        if chunk_summary:
+            chunk_summaries.append(chunk_summary)
+    
+    # If we only have one chunk summary, return it
+    if len(chunk_summaries) == 1:
+        return chunk_summaries[0]
+    
+    # Otherwise, summarize the summaries
+    combined_prompt = "Create a unified summary of this file based on summaries of its chunks:\n\n"
+    combined_prompt += f"FILE: {relative_path}\n\n"
+    combined_prompt += "CHUNK SUMMARIES:\n"
+    
+    # Add each chunk summary
+    for i, summary in enumerate(chunk_summaries):
+        combined_prompt += f"Chunk {i+1}: {summary}\n\n"
+    
+    combined_prompt += "Provide a final, coherent summary of the entire file's purpose and functionality (3-4 sentences max)."
+    
+    final_summary = call_openai_api(
+        combined_prompt, api_key, model=model, max_tokens=250
+    )
+    
+    return final_summary or "A large file with multiple components."
+
+
 def generate_file_summaries(
-    files: List[Tuple[str, str, int]], api_key: str, batch_size: int = 5
+    files: List[Tuple[str, str, int]], api_key: str, batch_size: int = 5, model: str = "gpt-3.5-turbo-16k"
 ) -> Dict[str, str]:
     """
     Generate summaries for files using OpenAI API via curl.
     Process files in batches to be efficient.
+    Handle large files by splitting them into chunks.
     """
     summaries = {}
+    max_tokens_per_file = 8000 * 2  # Threshold for considering a file "large"
 
     # Setup progress bar
     try:
         from tqdm import tqdm
 
         files_with_progress = tqdm(
-            range(0, len(files), batch_size), desc="Analyzing files", unit="batch"
+            range(0, len(files)), desc="Analyzing files", unit="file"
         )
     except ImportError:
         # Fallback if tqdm isn't installed
-        print("Processing files in batches (install 'tqdm' for progress bar)")
-        files_with_progress = range(0, len(files), batch_size)
+        print("Processing files (install 'tqdm' for progress bar)")
+        files_with_progress = range(0, len(files))
 
-    # Process files in batches
+    # First, handle large files individually
+    large_files = []
+    regular_files = []
+    
     for i in files_with_progress:
-        batch = files[i : i + batch_size]
-        batch_content = []
-
-        for file_path, relative_path, _ in batch:
+        file_path, relative_path, token_count = files[i]
+        
+        # Split large files vs regular files
+        if token_count > max_tokens_per_file:
+            large_files.append((file_path, relative_path, token_count))
+        else:
+            regular_files.append((file_path, relative_path, token_count))
+    
+    # Process large files individually
+    if large_files:
+        print(f"Processing {len(large_files)} large files individually...")
+        for file_path, relative_path, _ in large_files:
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                batch_content.append((relative_path, content))
+                    
+                summary = generate_summary_for_large_file(
+                    file_path, relative_path, content, api_key, model=model
+                )
+                
+                if summary:
+                    summaries[relative_path] = summary
+                    
             except Exception as e:
-                logging.warning(f"Error reading {file_path}: {e}")
+                logging.warning(f"Error processing large file {file_path}: {e}")
+    
+    # Process regular files in batches
+    if regular_files:
+        print(f"Processing {len(regular_files)} regular files in batches...")
+        
+        # Process files in batches
+        for i in range(0, len(regular_files), batch_size):
+            batch = regular_files[i: i + batch_size]
+            batch_content = []
 
-        # Skip empty batches
-        if not batch_content:
-            continue
+            for file_path, relative_path, _ in batch:
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    batch_content.append((relative_path, content))
+                except Exception as e:
+                    logging.warning(f"Error reading {file_path}: {e}")
 
-        # Prepare the prompt
-        prompt = """
-I need concise summaries of these files from a codebase. These summaries will be used as context for an LLM to answer questions about the code.
-For each file, provide a brief description that:
-1. Explains its primary purpose
-2. Mentions key functionality or components
-3. Captures anything unique or important about its implementation
-4. Is optimized to help answer follow-up questions about the code
-
-Keep each summary to 1-3 sentences maximum, focused on what would be most helpful for understanding the code.
-
-"""
-
-        for relative_path, content in batch_content:
-            prompt += f"FILE: {relative_path}\nCONTENT:\n{content}\n\n"
-
-        prompt += "Respond with a JSON object where keys are the file paths and values are the summaries."
-
-        try:
-            result = call_openai_api(
-                prompt, api_key, model="gpt-3.5-turbo-16k", max_tokens=2000
-            )
-
-            if not result:
+            # Skip empty batches
+            if not batch_content:
                 continue
 
-            # Try to parse the JSON response
+            # Prepare the prompt
+            prompt = "I need concise summaries of these files from a codebase. These summaries will be used as context for an LLM to answer questions about the code.\n"
+            prompt += "For each file, provide a brief description that:\n"
+            prompt += "1. Explains its primary purpose\n"
+            prompt += "2. Mentions key functionality or components\n"
+            prompt += "3. Captures anything unique or important about its implementation\n"
+            prompt += "4. Is optimized to help answer follow-up questions about the code\n\n"
+            prompt += "Keep each summary to 1-3 sentences maximum, focused on what would be most helpful for understanding the code.\n\n"
+
+            for relative_path, content in batch_content:
+                prompt += f"FILE: {relative_path}\nCONTENT:\n{content}\n\n"
+
+            prompt += "Respond with a JSON object where keys are the file paths and values are the summaries."
+
             try:
-                # Extract JSON if it's wrapped in triple backticks
-                if result.startswith("```json") and result.endswith("```"):
-                    result = result[7:-3].strip()
-                elif result.startswith("```") and result.endswith("```"):
-                    result = result[3:-3].strip()
+                result = call_openai_api(
+                    prompt, api_key, model=model, max_tokens=2000
+                )
 
-                batch_summaries = json.loads(result)
-                summaries.update(batch_summaries)
-            except json.JSONDecodeError:
-                # Fallback: simple parsing if JSON is malformed
-                for relative_path, _ in batch_content:
-                    if relative_path in result:
-                        parts = result.split(relative_path)
-                        if len(parts) > 1:
-                            summary_part = parts[1].split("\n\n")[0].strip()
-                            summaries[relative_path] = summary_part
+                if not result:
+                    continue
 
-        except Exception as e:
-            logging.error(f"Error generating summaries: {e}")
+                # Try to parse the JSON response
+                try:
+                    # Extract JSON if it's wrapped in triple backticks
+                    if result.startswith("```json") and result.endswith("```"):
+                        result = result[7:-3].strip()
+                    elif result.startswith("```") and result.endswith("```"):
+                        result = result[3:-3].strip()
+
+                    batch_summaries = json.loads(result)
+                    summaries.update(batch_summaries)
+                except json.JSONDecodeError:
+                    # Fallback: simple parsing if JSON is malformed
+                    for relative_path, _ in batch_content:
+                        if relative_path in result:
+                            parts = result.split(relative_path)
+                            if len(parts) > 1:
+                                summary_part = parts[1].split("\n\n")[0].strip()
+                                summaries[relative_path] = summary_part
+
+            except Exception as e:
+                logging.error(f"Error generating summaries: {e}")
 
     return summaries
 
@@ -488,17 +675,50 @@ def generate_project_context(
     output_file: str = "llmcontext.txt",
     max_files: int = 100,
     respect_gitignore: bool = True,
+    model: str = None,
 ) -> None:
     """
     Generate a comprehensive context file about the project for LLMs.
     """
+    # Ask for model preference only once at the beginning if not specified
+    if model is None:
+        default_model = "gpt-3.5-turbo"
+        model = ask_for_model_preference(default_model)
+        print(f"Using model {model} for all API calls")
+        
     print(f"Analyzing project structure in {root_dir}...")
 
     # Count files first to show progress
     total_files = 0
+    
+    # Check for .gitignore file and parse patterns
+    gitignore_path = os.path.join(root_dir, ".gitignore")
+    gitignore_patterns = []
+    if respect_gitignore and os.path.isfile(gitignore_path):
+        gitignore_patterns = parse_gitignore(gitignore_path)
+        print(
+            f"Found .gitignore with {len(gitignore_patterns)} patterns - will respect these patterns"
+        )
+    
     for root, dirs, files in os.walk(root_dir):
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
-        total_files += len([f for f in files if is_text_file(os.path.join(root, f))])
+        
+        # Skip directories ignored by gitignore
+        if respect_gitignore and gitignore_patterns:
+            dirs[:] = [d for d in dirs if not is_ignored_by_gitignore(
+                os.path.join(root, d), root_dir, gitignore_patterns)]
+                
+        for file in files:
+            file_path = os.path.join(root, file)
+            
+            # Skip files ignored by gitignore
+            if respect_gitignore and gitignore_patterns and is_ignored_by_gitignore(
+                file_path, root_dir, gitignore_patterns
+            ):
+                continue
+                
+            if is_text_file(file_path):
+                total_files += 1
 
     print(
         f"Found {total_files} text files to analyze (will select a subset for processing)"
@@ -514,7 +734,7 @@ def generate_project_context(
         return
 
     print(f"Selected {len(files)} representative files for analysis")
-    file_summaries = generate_file_summaries(files, api_key)
+    file_summaries = generate_file_summaries(files, api_key, model=model)
 
     # Group files by directory
     dir_structure = {}
@@ -534,24 +754,18 @@ def generate_project_context(
     )
 
     try:
-        overview_prompt = f"""
-Based on these file summaries from a project, provide a concise overview of what this project appears to be. 
-This overview will be used as context for an LLM to answer questions about the codebase.
-
-Your overview should:
-1. Clearly state the project's main purpose and functionality
-2. Identify key technologies, frameworks, and languages used
-3. Outline the general architecture or main components
-4. Be optimized for an LLM to reference when answering follow-up questions about the code
-
-Keep it under 5 sentences, focused on the most essential information a developer would need.
-
-FILE SUMMARIES:
-{project_files_content}
-"""
+        overview_prompt = f"Based on these file summaries from a project, provide a concise overview of what this project appears to be.\n"
+        overview_prompt += "This overview will be used as context for an LLM to answer questions about the codebase.\n\n"
+        overview_prompt += "Your overview should:\n"
+        overview_prompt += "1. Clearly state the project's main purpose and functionality\n"
+        overview_prompt += "2. Identify key technologies, frameworks, and languages used\n"
+        overview_prompt += "3. Outline the general architecture or main components\n"
+        overview_prompt += "4. Be optimized for an LLM to reference when answering follow-up questions about the code\n\n"
+        overview_prompt += "Keep it under 5 sentences, focused on the most essential information a developer would need.\n\n"
+        overview_prompt += f"FILE SUMMARIES:\n{project_files_content}"
 
         project_overview = call_openai_api(
-            overview_prompt, api_key, model="gpt-3.5-turbo", max_tokens=250
+            overview_prompt, api_key, model=model, max_tokens=250
         )
 
         if not project_overview:
@@ -641,6 +855,10 @@ def main():
         action="store_true",
         help="Ignore .gitignore patterns when generating context (not recommended)",
     )
+    parser.add_argument(
+        "--model",
+        help="OpenAI model to use (if not provided, will prompt once for preference)",
+    )
     args = parser.parse_args()
 
     # Convert exclude_dirs to a set for O(1) lookups
@@ -653,6 +871,14 @@ def main():
     dir_name = os.path.basename(root_dir)
     if not dir_name:  # Handle case of root directory
         dir_name = root_dir
+    
+    # Check for .gitignore file and parse patterns for directory tree
+    gitignore_patterns = None
+    if not args.ignore_gitignore:
+        gitignore_path = os.path.join(root_dir, ".gitignore")
+        if os.path.isfile(gitignore_path):
+            gitignore_patterns = parse_gitignore(gitignore_path)
+            print(f"Found .gitignore with {len(gitignore_patterns)} patterns - will respect these patterns")
 
     # Write the tree to the specified file
     with open(args.output, "w", encoding="utf-8") as f:
@@ -660,7 +886,7 @@ def main():
         f.write(f"Excluding: {', '.join(sorted(exclude_dirs))}\n")
         f.write("-" * 50 + "\n")
         f.write(f"{dir_name}/\n")
-        write_directory_tree(f, root_dir, exclude_dirs)
+        write_directory_tree(f, root_dir, exclude_dirs, gitignore_patterns=gitignore_patterns, project_root=root_dir)
 
     print(f"Directory tree has been saved to: {args.output}")
 
@@ -697,6 +923,7 @@ def main():
             args.context_output,
             args.max_files,
             not args.ignore_gitignore,  # Respect gitignore unless --ignore-gitignore is specified
+            args.model,
         )
 
 
