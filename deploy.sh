@@ -117,12 +117,15 @@ if [[ $do_upload == "y" ]]; then
     # Check if upload was successful
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Package v${current_version} successfully deployed to PyPI!${NC}"
-    
-    # 7. Create and push git tag for this version
-    echo -e "\n${YELLOW}Creating git tag v${current_version}...${NC}"
-    git tag -a "v${current_version}" -m "Release version ${current_version}"
-    git push origin "v${current_version}"
-    echo -e "${GREEN}Tag pushed to GitHub!${NC}"
+        
+        # 7. Create and push git tag for this version
+        echo -e "\n${YELLOW}Creating git tag v${current_version}...${NC}"
+        git tag -a "v${current_version}" -m "Release version ${current_version}"
+        git push origin "v${current_version}"
+        echo -e "${GREEN}Tag pushed to GitHub!${NC}"
+    else
+        echo -e "${RED}Upload failed. Check your credentials and try again.${NC}"
+    fi
 else
     echo -e "${YELLOW}Upload skipped. You can manually upload later with:${NC}"
     echo "python -m twine upload dist/*"
