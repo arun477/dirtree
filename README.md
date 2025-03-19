@@ -1,13 +1,13 @@
 # llmdirtree
 
-A specialized directory tree generator designed for LLMs to understand project structures and file organization.
+A directory tree generator and codebase context provider designed specifically for enhancing LLM interactions with your code.
 
 ## Purpose
 
-`llmdirtree` creates standardized text representations of directory structures that are optimized for:
-- Large Language Models (LLMs) to process and understand code repositories
-- AI assistants working with codebases
-- Consistent directory visualization in LLM prompts
+`llmdirtree` helps you work more effectively with Large Language Models (LLMs) by:
+- Generating visual directory trees for structural understanding
+- Creating contextual summaries of your codebase that respect privacy settings
+- Optimizing code information for LLM follow-up questions
 
 ## Installation
 
@@ -15,43 +15,63 @@ A specialized directory tree generator designed for LLMs to understand project s
 pip install llmdirtree
 ```
 
-## Usage with LLMs
+## Key Features
 
-### Basic Workflow
+### Directory Tree Visualization
+- Clean, standardized visualization of project structure
+- Unicode box-drawing characters for optimal parsing
+- Intelligent filtering of non-essential directories
 
-1. Generate a directory tree:
-   ```bash
-   llmdirtree --root /path/to/project --output project_structure.txt
-   ```
+### LLM Context Generation
+- AI-powered analysis of your codebase using OpenAI API
+- Security-focused with automatic `.gitignore` pattern recognition
+- File-by-file summaries optimized for follow-up questions
+- Project overview that captures your codebase's essence
 
-2. Include the structure in your LLM prompt:
-   ```
-   Here's my project structure:
-   ```
-   [paste content of project_structure.txt]
-   ```
-   Can you help me understand...
-   ```
+### Security and Privacy
+- Respects `.gitignore` patterns to avoid exposing sensitive information
+- Zero dependencies approach (uses system curl instead of libraries)
+- Efficient token usage for minimal data exposure
 
-### CLI Options
+## Usage Examples
+
+### Basic Directory Tree
 
 ```bash
-# Default usage
-llmdirtree
-
-# Specify root directory
-llmdirtree --root /path/to/codebase
-
-# Exclude irrelevant directories
-llmdirtree --exclude node_modules .git venv
-
-# Custom output location
-llmdirtree --output project_context.txt
+# Generate a simple directory tree
+llmdirtree --root /path/to/project --output project_structure.txt
 ```
 
-## Output Format
+### With LLM Context Generation
 
-Output is formatted with Unicode box-drawing characters for optimal parsing:
+```bash
+# Generate both directory tree AND code context
+llmdirtree --root /path/to/project --llm-context --openai-key YOUR_API_KEY
+```
+
+This creates two files:
+- `directory_tree.txt` - Visual structure
+- `llmcontext.txt` - AI-generated project overview and file summaries
+
+### Additional Options
+
+```bash
+# Exclude specific directories
+llmdirtree --exclude node_modules .git venv dist
+
+# Customize output locations
+llmdirtree --output custom_tree.txt --context-output custom_context.txt
+
+# Control file selection for context generation
+llmdirtree --max-files 150 --llm-context
+
+# Override gitignore protection (not recommended)
+llmdirtree --ignore-gitignore --llm-context
+```
+
+## Example Output
+
+### Directory Tree
 
 ```
 Directory Tree for: /project
@@ -67,12 +87,37 @@ project/
 └── README.md
 ```
 
+### LLM Context File
+
+```markdown
+# project-name
+
+> A React web application for tracking personal fitness goals with a Node.js backend and MongoDB database.
+
+## src/components/
+
+- **Dashboard.jsx**: Main dashboard component that displays user fitness stats, recent activities, and goal progress.
+- **WorkoutForm.jsx**: Form for creating and editing workout entries with validation and submission handling.
+
+## src/utils/
+
+- **api.js**: Contains functions for making API calls to the backend, handling authentication and data fetching.
+- **formatters.js**: Utility functions for formatting dates, weights, and other fitness metrics consistently.
+```
+
 ## Benefits for LLM Workflows
 
-- **Contextual Understanding**: Helps LLMs understand project organization at a glance
-- **Focused Analysis**: Excludes non-essential directories by default
-- **Consistent Format**: Standardized output format is easily parsed by AI models
-- **Memory Efficient**: Provides high-level context without requiring full codebase upload
+- **Comprehensive context** without uploading your entire codebase
+- **More accurate responses** with both structural and semantic understanding
+- **Security first** approach that protects sensitive information
+- **Time savings** from clearer communication with AI assistants
+
+## Technical Details
+
+- No external dependencies required for core functionality
+- Progress bar available with optional `tqdm` installation
+- Automatically respects `.gitignore` patterns for security
+- Uses system curl instead of Python libraries for API calls
 
 ## License
 
