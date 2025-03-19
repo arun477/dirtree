@@ -85,126 +85,38 @@ python -m build
 # 6. Upload to PyPI
 echo -e "\n${YELLOW}Uploading to PyPI...${NC}"
 
-# Function to automatically increment patch version
-increment_patch_version() {
-    local version=$1
-    # Split version into components
-    local major=$(echo $version | cut -d. -f1)
-    local minor=$(echo $version | cut -d. -f2)
-    local patch=$(echo $version | cut -d. -f3)
-    
-    # Increment patch version
-    patch=$((patch + 1))
-    echo "${major}.${minor}.${patch}"
-}
-
 # Get credentials - simplest approach
 read -p "Continue with upload? (y/n): " do_upload
 
 if [[ $do_upload == "y" ]]; then
-    upload_success=false
-    max_attempts=3
-    attempt=1
-    
-    while [[ $attempt -le $max_attempts && $upload_success == false ]]; do
-        echo -e "${YELLOW}Upload attempt $attempt of $max_attempts${NC}"
+    # Check if .env file exists
+    if [[ -f ".env" ]]; then
+        echo -e "${YELLOW}Found .env file. Reading credentials...${NC}"
+        # Extract username and password directly
+        username=$(grep -m 1 "TWINE_USERNAME" .env | cut -d '=' -f 2)
+        password=$(grep -m 1 "TWINE_PASSWORD" .env | cut -d '=' -f 2)
         
-        # Check if .env file exists
-        if [[ -f ".env" ]]; then
-            echo -e "${YELLOW}Found .env file. Reading credentials...${NC}"
-            # Extract username and password directly
-            username=$(grep -m 1 "TWINE_USERNAME" .env | cut -d '=' -f 2)
-            password=$(grep -m 1 "TWINE_PASSWORD" .env | cut -d '=' -f 2)
-            
-            # Check if credentials were found
-            if [[ -n "$username" && -n "$password" ]]; then
-                echo -e "${GREEN}Using credentials from .env file${NC}"
-                echo -e "${YELLOW}Running direct upload command with .env credentials${NC}"
-                # Execute explicit command with credentials and capture output
-                upload_output=$(python -m twine upload --username "$username" --password "$password" dist/* 2>&1)
-                upload_status=$?
-            else
-                echo -e "${RED}Could not read credentials from .env file${NC}"
-                # Fall back to manual entry
-                read -p "Enter PyPI username: " username
-                read -sp "Enter PyPI password/token: " password
-                echo ""
-                upload_output=$(python -m twine upload --username "$username" --password "$password" dist/* 2>&1)
-                upload_status=$?
-            fi
+        # Check if credentials were found
+        if [[ -n "$username" && -n "$password" ]]; then
+            echo -e "${GREEN}Using credentials from .env file${NC}"
+            echo -e "${YELLOW}Running direct upload command with .env credentials${NC}"
+            # Execute explicit command with credentials
+            python -m twine upload --username "$username" --password "$password" dist/*
         else
-            echo -e "${YELLOW}No .env file found. Please enter credentials manually:${NC}"
+            echo -e "${RED}Could not read credentials from .env file${NC}"
+            # Fall back to manual entry
             read -p "Enter PyPI username: " username
             read -sp "Enter PyPI password/token: " password
             echo ""
-            upload_output=$(python -m twine upload --username "$username" --password "$password" dist/* 2>&1)
-            upload_status=$?
+            python -m twine upload --username "$username" --password "$password" dist/*
         fi
-        
-        # Check if upload was successful
-        if [[ $upload_status -eq 0 ]]; then
-            upload_success=true
-            echo -e "${GREEN}Package v${current_version} successfully deployed to PyPI!${NC}"
-        else
-            echo "$upload_output"
-            
-            # Check if error is due to file already existing
-            if [[ "$upload_output" == *"File already exists"* ]]; then
-                echo -e "${YELLOW}Version ${current_version} already exists on PyPI. Incrementing patch version...${NC}"
-                
-                # Increment patch version
-                new_version=$(increment_patch_version "$current_version")
-                echo -e "${YELLOW}Bumping version from ${current_version} to ${new_version}${NC}"
-                
-                # Update version in setup.py
-                if [[ "$OSTYPE" == "darwin"* ]]; then
-                    # macOS requires an empty string after -i
-                    sed -i '' "s/version=\"${current_version}\"/version=\"${new_version}\"/g" setup.py
-                else
-                    # Linux version
-                    sed -i "s/version=\"${current_version}\"/version=\"${new_version}\"/g" setup.py
-                fi
-                
-                # Update version in __init__.py if it exists
-                if [[ -f "dirtree/__init__.py" ]]; then
-                    if [[ "$OSTYPE" == "darwin"* ]]; then
-                        sed -i '' "s/__version__ = \"${current_version}\"/__version__ = \"${new_version}\"/g" dirtree/__init__.py
-                    else
-                        sed -i "s/__version__ = \"${current_version}\"/__version__ = \"${new_version}\"/g" dirtree/__init__.py
-                    fi
-                fi
-                
-                # Update current version
-                current_version=$new_version
-                
-                # Commit version change
-                git add setup.py dirtree/__init__.py
-                git commit -m "Bump version to ${new_version}"
-                git push origin main
-                
-                # Rebuild the package
-                echo -e "${YELLOW}Rebuilding package with new version...${NC}"
-                # Clean previous builds
-                [[ -d "dist" ]] && rm -rf dist/
-                [[ -d "build" ]] && rm -rf build/
-                rm -rf *.egg-info/ 2>/dev/null || true
-                
-                # Build the package
-                python -m build
-                
-                # Continue to next attempt
-                attempt=$((attempt + 1))
-            else
-                # Other error occurred
-                echo -e "${RED}Upload failed. Error: ${upload_output}${NC}"
-                read -p "Retry upload? (y/n): " retry
-                if [[ "$retry" != "y" ]]; then
-                    break
-                fi
-                attempt=$((attempt + 1))
-            fi
-        fi
-    done
+    else
+        echo -e "${YELLOW}No .env file found. Please enter credentials manually:${NC}"
+        read -p "Enter PyPI username: " username
+        read -sp "Enter PyPI password/token: " password
+        echo ""
+        python -m twine upload --username "$username" --password "$password" dist/*
+    fi
     
     # Check if upload was successful
     if [ $? -eq 0 ]; then
