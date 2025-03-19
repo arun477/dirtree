@@ -15,7 +15,9 @@ import tempfile
 import shutil
 import fnmatch
 import re
-from typing import Set, TextIO, List, Dict, Tuple, Pattern, Optional
+import time
+import random
+from typing import Set, TextIO, List, Dict, Tuple, Pattern, Optional, Any
 from pathlib import Path
 
 
@@ -229,6 +231,9 @@ def is_ignored_by_gitignore(
     rel_path = os.path.relpath(file_path, root_dir)
     # Use forward slashes for consistency (gitignore standard)
     rel_path = rel_path.replace(os.path.sep, "/")
+    
+    # Get the basename for matching
+    basename = os.path.basename(file_path)
 
     # Check each directory level for matches
     path_parts = rel_path.split("/")
@@ -237,9 +242,14 @@ def is_ignored_by_gitignore(
     # Also check if any parent directory matches a pattern
     for i in range(1, len(path_parts)):
         paths_to_check.append("/".join(path_parts[:i]))
+    
+    # Add the basename to check for dot-prefixed files in any directory
+    if basename.startswith('.'):
+        paths_to_check.append(basename)
 
     # Track matched patterns (last matching pattern wins)
     should_ignore = False
+    matched_pattern = None
 
     # Check all patterns (last match wins)
     for pattern in gitignore_patterns:
@@ -255,6 +265,29 @@ def is_ignored_by_gitignore(
         # Skip patterns that start with # (comments)
         if pattern.startswith("#"):
             continue
+            
+        # Special handling for patterns with leading dots and trailing slashes
+        is_dir_pattern = pattern.endswith('/')
+        if is_dir_pattern:
+            pattern_without_slash = pattern[:-1]
+        else:
+            pattern_without_slash = pattern
+            
+        # Check for exact matches first (for dot files and directories)
+        if basename == pattern_without_slash or rel_path == pattern_without_slash:
+            should_ignore = not negated
+            matched_pattern = pattern
+            continue
+            
+        # For directory patterns, check if this path is a directory that matches
+        if is_dir_pattern and os.path.isdir(file_path) and (
+            rel_path == pattern_without_slash or 
+            rel_path.startswith(pattern_without_slash + '/') or
+            basename == pattern_without_slash
+        ):
+            should_ignore = not negated
+            matched_pattern = pattern
+            continue
 
         # Convert pattern to regex if it has wildcards
         if any(c in pattern for c in "*?["):
@@ -264,14 +297,19 @@ def is_ignored_by_gitignore(
             for path in paths_to_check:
                 if re.match(pattern_regex, path):
                     should_ignore = not negated
+                    matched_pattern = pattern
                     break
+            # If we found a match, continue to the next pattern
+            if matched_pattern == pattern:
+                continue
 
         # Simple exact match (handles patterns without wildcards)
-        elif any(
-            path == pattern or path.startswith(pattern + "/") for path in paths_to_check
-        ):
-            should_ignore = not negated
-
+        for path in paths_to_check:
+            if path == pattern or path.startswith(pattern + "/"):
+                should_ignore = not negated
+                matched_pattern = pattern
+                break
+            
     return should_ignore
 
 
@@ -305,8 +343,14 @@ def collect_files_for_context(
         
         # Skip directories ignored by gitignore
         if respect_gitignore and gitignore_patterns:
-            dirs[:] = [d for d in dirs if not is_ignored_by_gitignore(
-                os.path.join(root, d), root_dir, gitignore_patterns)]
+            ignored_dirs = []
+            for d in dirs:
+                dir_path = os.path.join(root, d)
+                if is_ignored_by_gitignore(dir_path, root_dir, gitignore_patterns):
+                    ignored_dirs.append(d)
+            
+            # Remove ignored directories
+            dirs[:] = [d for d in dirs if d not in ignored_dirs]
 
         for file in sorted(files):
             file_path = os.path.join(root, file)
@@ -314,6 +358,8 @@ def collect_files_for_context(
 
             # Skip files larger than max_size_kb
             file_size_kb = os.path.getsize(file_path) / 1024
+            if file_size_kb > max_size_kb:
+                continue
             
             # Only process text files
             if not is_text_file(file_path):
@@ -434,10 +480,13 @@ def ask_for_model_preference(default_model: str) -> str:
 
 
 def call_openai_api(
-    prompt: str, api_key: str, model: str = "gpt-3.5-turbo", max_tokens: int = 1000
+    prompt: str, api_key: str, model: str = "gpt-3.5-turbo", max_tokens: int = 1000, 
+    max_retries: int = 5, base_delay: float = 1.0
 ) -> str:
-    """Call OpenAI API using curl command."""
-
+    """
+    Call OpenAI API using curl command.
+    Implements exponential backoff for rate limiting.
+    """
     # Create JSON payload
     data = {
         "model": model,
@@ -452,45 +501,116 @@ def call_openai_api(
         "max_tokens": max_tokens,
     }
 
+    # Calculate approximate token count for rate limiting awareness
+    approx_tokens = estimate_tokens(prompt) + max_tokens
+    
     # Write JSON to a temporary file
     fd, temp_path = tempfile.mkstemp(suffix=".json")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f)
-
-        # Prepare curl command
-        curl_cmd = [
-            "curl",
-            "https://api.openai.com/v1/chat/completions",
-            "-H",
-            f"Authorization: Bearer {api_key}",
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            f"@{temp_path}",
-        ]
-
-        # Execute curl command
-        result = subprocess.run(curl_cmd, capture_output=True, text=True, check=True)
-
-        # Parse the JSON response
+    
+    retry_count = 0
+    while retry_count <= max_retries:
         try:
-            response = json.loads(result.stdout)
-            if "choices" in response and len(response["choices"]) > 0:
-                return response["choices"][0]["message"]["content"].strip()
-            else:
-                logging.error(f"Unexpected API response format: {result.stdout}")
-                return ""
-        except json.JSONDecodeError:
-            logging.error(f"Failed to parse API response: {result.stdout}")
-            return ""
+            with os.fdopen(fd if retry_count == 0 else tempfile.mkstemp(suffix=".json")[0], "w") as f:
+                json.dump(data, f)
 
-    except subprocess.CalledProcessError as e:
-        logging.error(f"API call failed: {e.stderr}")
-        return ""
-    finally:
-        # Always clean up the temp file
-        os.unlink(temp_path)
+            # Prepare curl command
+            curl_cmd = [
+                "curl",
+                "https://api.openai.com/v1/chat/completions",
+                "-H",
+                f"Authorization: Bearer {api_key}",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                f"@{temp_path}",
+            ]
+
+            # Execute curl command
+            result = subprocess.run(curl_cmd, capture_output=True, text=True, check=True)
+
+            # Parse the JSON response
+            try:
+                response = json.loads(result.stdout)
+                
+                # Check for rate limit error in the response
+                if "error" in response and "rate_limit" in response["error"].get("type", ""):
+                    # Get retry time from error message if available
+                    error_msg = response["error"].get("message", "")
+                    retry_seconds_match = re.search(r"try again in (\d+\.\d+)s", error_msg)
+                    
+                    if retry_seconds_match:
+                        retry_seconds = float(retry_seconds_match.group(1))
+                        # Add a small buffer to ensure we're past the rate limit
+                        wait_time = retry_seconds + 0.5
+                    else:
+                        # Calculate delay with exponential backoff and jitter
+                        wait_time = base_delay * (2 ** retry_count) * (0.8 + 0.4 * random.random())
+                    
+                    print(f"Rate limit reached. Waiting {wait_time:.2f}s before retrying...")
+                    time.sleep(wait_time)
+                    retry_count += 1
+                    continue
+                
+                # Success case
+                if "choices" in response and len(response["choices"]) > 0:
+                    # Add a short delay to respect rate limits
+                    time.sleep(0.5 + (approx_tokens / 60000))  # Adaptive delay based on token count
+                    return response["choices"][0]["message"]["content"].strip()
+                else:
+                    logging.error(f"Unexpected API response format: {result.stdout}")
+                    
+                    # Check if we should retry
+                    if retry_count < max_retries:
+                        wait_time = base_delay * (2 ** retry_count) * (0.8 + 0.4 * random.random())
+                        print(f"Unexpected response. Retrying in {wait_time:.2f}s...")
+                        time.sleep(wait_time)
+                        retry_count += 1
+                        continue
+                    return ""
+                    
+            except json.JSONDecodeError:
+                logging.error(f"Failed to parse API response: {result.stdout}")
+                if retry_count < max_retries:
+                    wait_time = base_delay * (2 ** retry_count) * (0.8 + 0.4 * random.random())
+                    print(f"JSON parse error. Retrying in {wait_time:.2f}s...")
+                    time.sleep(wait_time)
+                    retry_count += 1
+                    continue
+                return ""
+
+        except subprocess.CalledProcessError as e:
+            error_output = e.stderr
+            
+            # Check for rate limit in error message
+            if "rate_limit" in error_output:
+                wait_time = base_delay * (2 ** retry_count) * (0.8 + 0.4 * random.random())
+                print(f"Rate limit reached. Waiting {wait_time:.2f}s before retrying...")
+                time.sleep(wait_time)
+                retry_count += 1
+                continue
+            
+            logging.error(f"API call failed: {e.stderr}")
+            
+            # Retry on other errors too
+            if retry_count < max_retries:
+                wait_time = base_delay * (2 ** retry_count) * (0.8 + 0.4 * random.random())
+                print(f"API call failed. Retrying in {wait_time:.2f}s...")
+                time.sleep(wait_time)
+                retry_count += 1
+                continue
+            
+            return ""
+        finally:
+            # Clean up the temp file (only on the last attempt or success)
+            if retry_count == max_retries or "response" in locals():
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+    
+    # If we've exhausted retries
+    print("Maximum retries reached. Unable to get response from API.")
+    return ""
 
 
 def generate_summary_for_large_file(
@@ -555,7 +675,10 @@ def generate_file_summaries(
     Handle large files by splitting them into chunks.
     """
     summaries = {}
-    max_tokens_per_file = 8000 * 2  # Threshold for considering a file "large"
+    max_tokens_per_file = 8000 * 2  # Threshold for considering a file "large" - increase this value to handle larger files without splitting
+    
+    # Add a delay between batches to avoid hitting rate limits
+    batch_delay = 2.0  # seconds
 
     # Setup progress bar
     try:
@@ -598,7 +721,11 @@ def generate_file_summaries(
                     summaries[relative_path] = summary
                     
             except Exception as e:
-                logging.warning(f"Error processing large file {file_path}: {e}")
+                logging.error(f"Error processing large file {file_path}: {e}")
+                
+        # Add a small delay between processing large files
+        if large_files and not large_files[-1] == (file_path, relative_path, _):
+            time.sleep(batch_delay)
     
     # Process regular files in batches
     if regular_files:
@@ -606,6 +733,10 @@ def generate_file_summaries(
         
         # Process files in batches
         for i in range(0, len(regular_files), batch_size):
+            # Add a delay between batches to avoid rate limits
+            if i > 0:
+                time.sleep(batch_delay)
+                
             batch = regular_files[i: i + batch_size]
             batch_content = []
 
@@ -620,6 +751,10 @@ def generate_file_summaries(
             # Skip empty batches
             if not batch_content:
                 continue
+                
+            # Estimate tokens in this batch to be conscious of rate limits
+            batch_token_estimate = sum(estimate_tokens(content) for _, content in batch_content)
+            print(f"Processing batch with approximately {batch_token_estimate} tokens...")
 
             # Prepare the prompt
             prompt = "I need concise summaries of these files from a codebase. These summaries will be used as context for an LLM to answer questions about the code.\n"
@@ -676,6 +811,7 @@ def generate_project_context(
     max_files: int = 100,
     respect_gitignore: bool = True,
     model: str = None,
+    batch_delay: float = 2.0,
 ) -> None:
     """
     Generate a comprehensive context file about the project for LLMs.
@@ -734,7 +870,7 @@ def generate_project_context(
         return
 
     print(f"Selected {len(files)} representative files for analysis")
-    file_summaries = generate_file_summaries(files, api_key, model=model)
+    file_summaries = generate_file_summaries(files, api_key, model=model, batch_size=5)
 
     # Group files by directory
     dir_structure = {}
@@ -859,6 +995,12 @@ def main():
         "--model",
         help="OpenAI model to use (if not provided, will prompt once for preference)",
     )
+    parser.add_argument(
+        "--batch-delay",
+        type=float,
+        default=2.0,
+        help="Delay in seconds between API call batches to avoid rate limits (default: 2.0)",
+    )
     args = parser.parse_args()
 
     # Convert exclude_dirs to a set for O(1) lookups
@@ -924,6 +1066,7 @@ def main():
             args.max_files,
             not args.ignore_gitignore,  # Respect gitignore unless --ignore-gitignore is specified
             args.model,
+            args.batch_delay,
         )
 
 

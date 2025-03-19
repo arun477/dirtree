@@ -9,5 +9,6 @@ dirtree/
 ├── dirtree/
 │   ├── __init__.py
 │   └── main.py
+├── llmcontext.txt
 ├── pyproject.toml
 └── setup.py
