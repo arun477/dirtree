@@ -87,25 +87,36 @@ echo -e "\n${YELLOW}Uploading to PyPI...${NC}"
 
 # Check for .env file with PyPI credentials
 if [[ -f ".env" ]]; then
-    echo -e "${YELLOW}Found .env file. Will use PyPI credentials from there.${NC}"
+    echo -e "${YELLOW}Found .env file. Will attempt to use PyPI credentials from there.${NC}"
     # Source the .env file to get TWINE_USERNAME and TWINE_PASSWORD
     source .env
 fi
 
-# Inform about credential source
-if [[ -n "$TWINE_USERNAME" && -n "$TWINE_PASSWORD" ]]; then
-    echo -e "${GREEN}Using PyPI credentials from environment variables.${NC}"
-elif [[ -f ~/.pypirc ]]; then
-    echo -e "${YELLOW}Using PyPI credentials from ~/.pypirc file.${NC}"
-else
-    echo -e "${YELLOW}No credentials found. You'll be prompted to enter them.${NC}"
+# Always provide an option to enter credentials manually
+echo -e "${YELLOW}Choose how to authenticate with PyPI:${NC}"
+echo "1. Use environment variables/credentials from .env (if available)"
+echo "2. Enter credentials manually"
+read -p "Enter your choice (1/2): " auth_choice
+
+if [[ $auth_choice == "2" ]]; then
+    read -p "Enter PyPI username (use __token__ for token auth): " twine_user
+    read -sp "Enter PyPI password or token: " twine_pass
+    echo ""  # Add a newline after password input
+    
+    # Use entered credentials for this upload only
+    export TWINE_USERNAME="$twine_user"
+    export TWINE_PASSWORD="$twine_pass"
 fi
 
 read -p "Continue with upload? (y/n): " do_upload
 
 if [[ $do_upload == "y" ]]; then
+    echo -e "${YELLOW}Running: python -m twine upload dist/*${NC}"
     python -m twine upload dist/*
-    echo -e "${GREEN}Package v${current_version} successfully deployed to PyPI!${NC}"
+    
+    # Check if upload was successful
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Package v${current_version} successfully deployed to PyPI!${NC}"
     
     # 7. Create and push git tag for this version
     echo -e "\n${YELLOW}Creating git tag v${current_version}...${NC}"
