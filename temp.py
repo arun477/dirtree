@@ -12,9 +12,7 @@ with open("text_extentions.json", "r") as f:
 
 
 def get_args():
-    parser = argparse.ArgumentParser(
-        description="Generate a directory tree and context for LLM"
-    )
+    parser = argparse.ArgumentParser(description="Generate a directory tree and context for LLM")
     parser.add_argument(
         "--root",
         default=".",
@@ -31,9 +29,7 @@ def get_args():
         default=100,
         help="Maximum number of files allowed to generate summary for",
     )
-    parser.add_argument(
-        "--ignore-gitignore", action="store_true", help="Ignore .gitignore patterns"
-    )
+    parser.add_argument("--ignore-gitignore", action="store_true", help="Ignore .gitignore patterns")
     parser.add_argument(
         "--batch-delay",
         type=float,
@@ -79,20 +75,12 @@ def is_gitignored(root_dir, path):
 
 
 def ask_for_model_preference(default_model):
-    res = (
-        input(
-            f"Would you like to use the default model ({default_model}) for all API calls? [Y/n]: "
-        )
-        .strip()
-        .lower()
-    )
+    res = input(f"Would you like to use the default model ({default_model}) for all API calls? [Y/n]: ").strip().lower()
     if res == "" or res.lower().startswith("y"):
         print(f"Using default model: {default_model}")
         return default_model
 
-    custom_model = input(
-        "Please enter the OpenAI model you would like to use: "
-    ).strip()
+    custom_model = input("Please enter the OpenAI model you would like to use: ").strip()
     if custom_model:
         print(f"Using model: {custom_model} for all API calls")
         return custom_model
@@ -149,12 +137,7 @@ def is_text_file(file_path: str) -> bool:
         try:
             with open(file_path, "r", encoding=encoding) as f:
                 sample = f.read(1024)
-                if (
-                    sample
-                    and sum(c.isprintable() or c in "\n\r\t" for c in sample)
-                    / len(sample)
-                    > 0.8
-                ):
+                if sample and sum(c.isprintable() or c in "\n\r\t" for c in sample) / len(sample) > 0.8:
                     return True
         except UnicodeDecodeError:
             continue
@@ -217,9 +200,7 @@ Provide a concise, informative summary in 1-3 sentences."""
         os.unlink(temp_path)
 
 
-def write_directory_tree(
-    file, root_dir, exclude_dirs={".git"}, prefix="", respect_gitignore=True
-):
+def write_directory_tree(file, root_dir, exclude_dirs={".git"}, prefix="", respect_gitignore=True):
     items = []
     try:
         for item in sorted(os.listdir(root_dir)):
@@ -239,9 +220,7 @@ def write_directory_tree(
         file.write(f"{prefix}{connector}{item}" + ("/" if is_dir else "") + "\n")
         if is_dir:
             next_prefix = prefix + ("    " if is_last else "│   ")
-            write_directory_tree(
-                file, path, exclude_dirs, next_prefix, respect_gitignore
-            )
+            write_directory_tree(file, path, exclude_dirs, next_prefix, respect_gitignore)
 
 
 def create_directory_viz(root_dir, dir_name, respect_gitignore=True):
@@ -252,9 +231,7 @@ def create_directory_viz(root_dir, dir_name, respect_gitignore=True):
     print(f"Directory tree saved to: {tree_file}")
 
 
-def generate_file_summaries(
-    files, root_dir, api_key, project_name, model="gpt-3.5-turbo", batch_delay=2.0
-):
+def generate_file_summaries(files, root_dir, api_key, project_name, model="gpt-3.5-turbo", batch_delay=2.0):
     summaries = {}
     for file_path in files:
         try:
@@ -316,9 +293,7 @@ def generate_llmcontext(args, project_name, root_dir):
     if not args.llm_context:
         return
 
-    text_files = get_all_valid_files(
-        root_dir, respect_gitignore=not args.ignore_gitignore
-    )
+    text_files = get_all_valid_files(root_dir, respect_gitignore=not args.ignore_gitignore)
     text_files = [ele for ele in text_files if is_text_file(ele)]
 
     if len(text_files) > args.max_files:
@@ -326,9 +301,7 @@ def generate_llmcontext(args, project_name, root_dir):
         text_files = text_files[: args.max_files]
     api_key = get_api_key()
     model = ask_for_model_preference("gpt-3.5-turbo-16k")
-    summaries = generate_file_summaries(
-        text_files, root_dir, api_key, project_name, model, args.batch_delay
-    )
+    summaries = generate_file_summaries(text_files, root_dir, api_key, project_name, model, args.batch_delay)
     dir_structure = get_dir_structure(summaries)
     create_context_file(project_name, dir_structure)
 
