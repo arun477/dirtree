@@ -1,19 +1,7 @@
 # dirtree
 
-> The 'llmdirtree' project is a tool designed to enhance interactions with large language models (LLMs) by visualizing directory structures and generating contextual information. It is primarily developed in Python, utilizing setuptools for packaging and deployment, and integrates with the OpenAI API for generating file summaries. The project architecture includes a core package, 'dirtree', which provides functionality for generating directory trees and processing them to create context for LLMs. Deployment is automated via a Bash script that manages versioning and PyPI uploads. Key components include scripts for directory processing, context generation, and integration with LLMs, with optional features like progress bars.
-
 ## Root Directory
 
-- **.gitignore**: Specifies files and directories to be ignored by Git, focusing on Python build artifacts, environment files, IDE configurations, and OS-specific files.
-- **README.md**: Describes 'llmdirtree', a tool for enhancing LLM interactions by visualizing directory structures and generating context, with installation instructions, key features, and usage examples.
-- **deploy.sh**: Bash script automating deployment for 'llmdirtree', handling git operations, version management, package building, and PyPI uploads, with optional .env credential use.
-- **directory_tree.txt**: Provides a visual representation of the 'llmdirtree' project's directory structure, excluding specified directories and files.
-- **llmcontext.txt**: Summarizes the 'llmdirtree' project, highlighting its purpose, core functionality, and architecture, focusing on directory processing and LLM context generation.
-- **pyproject.toml**: Defines the build system requirements for the project, specifying setuptools and wheel as dependencies, and using setuptools.build_meta as the build backend.
-- **setup.py**: Configures the Python package 'llmdirtree', specifying metadata such as version, author, and entry points for a console script, with optional dependencies for progress bars.
-
-## dirtree/
-
-- **__init__.py**: Initializes the 'dirtree' package, exposing the main function and write_directory_tree function, and sets the package version.
-- **main.py**: Implements a directory tree generator and LLM context provider, featuring functions to write directory structures, handle .gitignore patterns, and interact with the OpenAI API for generating file summaries and project context.
+- **__init__.py**: This file, __init__.py, serves as the entry point for the 'dirtree' project. It imports the main functionality from the 'main' module, including the 'main' and 'write_directory_tree' functions. It also defines the version number for the project as "0.1.5". Understanding this file is crucial for understanding how the project is structured and how the main functionality is accessed.
+- **main.py**: The `main.py` file in the `dirtree` project is responsible for generating a visual directory tree structure and creating a comprehensive context file for LLM interactions. It implements functions for writing the directory tree to a file, determining if a file is a text file, estimating the number of tokens in text, parsing gitignore patterns, and checking if a file should be ignored based on gitignore patterns. The file also includes functions for collecting text files for context generation, splitting a file into chunks, calling the OpenAI API for text completion, generating summaries for large files, and generating file summaries and project context for LLMs. The main function parses command line arguments and orchestrates the generation of the directory tree and LLM context.
 

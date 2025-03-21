@@ -1,14 +1,3 @@
-Directory Tree for: /Users/arun/Documents/arun/dirtree
-Excluding: .DS_Store, .env, .git, __pycache__, build, dist, env, node_modules, venv
---------------------------------------------------
 dirtree/
-├── .gitignore
-├── README.md
-├── deploy.sh
-├── directory_tree.txt
-├── dirtree/
-│   ├── __init__.py
-│   └── main.py
-├── llmcontext.txt
-├── pyproject.toml
-└── setup.py
+├── __init__.py
+└── main.py
